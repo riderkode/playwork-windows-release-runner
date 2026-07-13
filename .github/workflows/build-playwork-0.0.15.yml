@@ -56,6 +56,60 @@ jobs:
           git diff --exit-code $proofCommit -- $proofPath
           if ($LASTEXITCODE -ne 0) { throw "Installed proof harness differs from $proofCommit" }
 
+      - name: Isolate the Windows proof environment hang
+        working-directory: source/runtime/playwork
+        run: |
+          $ErrorActionPreference = "Stop"
+          $artifact = (Resolve-Path "packages/computer-agent/binaries/windows-x64").Path
+          $node = Join-Path $artifact "node/node.exe"
+          $cli = Join-Path $artifact "dist/cli.js"
+          $root = Join-Path $env:RUNNER_TEMP "playwork-proof-env-diagnostic"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $deny = Join-Path $root "deny-network.cjs"
+          @'
+          const deny = () => { throw new Error("PLAYWORK_PROOF_NETWORK_DENIED"); };
+          const net = require("node:net");
+          const tls = require("node:tls");
+          const http = require("node:http");
+          const https = require("node:https");
+          net.Socket.prototype.connect = deny;
+          net.connect = deny;
+          net.createConnection = deny;
+          tls.connect = deny;
+          http.request = deny;
+          http.get = deny;
+          https.request = deny;
+          https.get = deny;
+          globalThis.fetch = deny;
+          '@ | Set-Content -Path $deny -Encoding utf8NoBOM
+          function Invoke-Proof([string]$label, [bool]$denyNetwork) {
+            $home = Join-Path $root $label
+            New-Item -ItemType Directory -Force -Path $home | Out-Null
+            $env:HOME = $home
+            $env:USERPROFILE = $home
+            $env:APPDATA = Join-Path $home "AppData/Roaming"
+            $env:LOCALAPPDATA = Join-Path $home "AppData/Local"
+            $env:PLAYWORK_PRODUCT_PROOF = "hosted-headless"
+            $env:PLAYWORK_COMPUTER_AGENT_DIR = Join-Path $home "agent"
+            $env:PLAYWORK_OFFLINE = "1"
+            $env:PLAYWORK_SKIP_VERSION_CHECK = "1"
+            if ($denyNetwork) { $env:NODE_OPTIONS = "--require=$deny" } else { Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue }
+            $stdout = Join-Path $root "$label.stdout.log"
+            $stderr = Join-Path $root "$label.stderr.log"
+            $process = Start-Process -FilePath $node -ArgumentList @($cli) -WorkingDirectory $artifact -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+            if (-not $process.WaitForExit(30000)) {
+              taskkill /PID $process.Id /T /F | Out-Host
+              "$label TIMEOUT"
+            } else {
+              "$label EXIT=$($process.ExitCode)"
+            }
+            if (Test-Path $stdout) { Get-Content $stdout }
+            if (Test-Path $stderr) { Get-Content $stderr }
+          }
+          Invoke-Proof "isolated-without-network-deny" $false
+          Invoke-Proof "isolated-with-network-deny" $true
+          Remove-Item Env:PLAYWORK_PRODUCT_PROOF,Env:NODE_OPTIONS -ErrorAction SilentlyContinue
+
       - name: Run functional smoke
         working-directory: source/runtime/playwork
         run: |
