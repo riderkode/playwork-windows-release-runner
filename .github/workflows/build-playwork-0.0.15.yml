@@ -44,33 +44,17 @@ jobs:
         working-directory: source/runtime/playwork
         run: npm run build:package -- --platform windows-x64 --app-attach auto
 
-      - name: Diagnose Hosted proof directly through embedded Node
-        working-directory: source/runtime/playwork
+      - name: Use the reviewed post-tag Windows proof harness
+        working-directory: source
         run: |
           $ErrorActionPreference = "Stop"
-          $artifact = (Resolve-Path "packages/computer-agent/binaries/windows-x64").Path
-          $node = Join-Path $artifact "node/node.exe"
-          $cli = Join-Path $artifact "dist/cli.js"
-          $stdout = Join-Path $env:RUNNER_TEMP "hosted-proof-direct.stdout.log"
-          $stderr = Join-Path $env:RUNNER_TEMP "hosted-proof-direct.stderr.log"
-          $env:PLAYWORK_PRODUCT_PROOF = "hosted-headless"
-          $env:PLAYWORK_AGENT_DIR = Join-Path $env:RUNNER_TEMP "playwork-hosted-proof-direct-agent"
-          $env:PI_CODING_AGENT_DIR = $env:PLAYWORK_AGENT_DIR
-          $env:PI_PACKAGE_DIR = $artifact
-          $process = Start-Process -FilePath $node -ArgumentList @($cli) -WorkingDirectory $artifact -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-          if (-not $process.WaitForExit(120000)) {
-            taskkill /PID $process.Id /T /F | Out-Host
-            "DIRECT_PROOF_TIMEOUT pid=$($process.Id)"
-          } else {
-            "DIRECT_PROOF_EXIT=$($process.ExitCode)"
-          }
-          "DIRECT_PROOF_STDOUT_BEGIN"
-          if (Test-Path $stdout) { Get-Content $stdout }
-          "DIRECT_PROOF_STDOUT_END"
-          "DIRECT_PROOF_STDERR_BEGIN"
-          if (Test-Path $stderr) { Get-Content $stderr }
-          "DIRECT_PROOF_STDERR_END"
-          Remove-Item Env:PLAYWORK_PRODUCT_PROOF -ErrorAction SilentlyContinue
+          $proofCommit = "885b678713cc6528f36da069425c6ffb0ed8dd43"
+          $proofPath = "runtime/playwork/scripts/proof/runtime-functional-smoke.mjs"
+          $proof = git show "${proofCommit}:${proofPath}"
+          if ($LASTEXITCODE -ne 0) { throw "Could not read reviewed proof harness at $proofCommit" }
+          $proof | Set-Content -Path $proofPath -Encoding utf8NoBOM
+          git diff --exit-code $proofCommit -- $proofPath
+          if ($LASTEXITCODE -ne 0) { throw "Installed proof harness differs from $proofCommit" }
 
       - name: Run functional smoke
         working-directory: source/runtime/playwork
