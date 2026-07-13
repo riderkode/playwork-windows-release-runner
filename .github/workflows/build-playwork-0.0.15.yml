@@ -20,14 +20,14 @@ jobs:
 
       - name: Check out exact private source
         env:
-          PLAYWORK_SOURCE_DEPLOY_KEY: ${{ secrets.PLAYWORK_SOURCE_DEPLOY_KEY }}
+          PLAYWORK_SOURCE_DEPLOY_KEY_B64: ${{ secrets.PLAYWORK_SOURCE_DEPLOY_KEY_B64 }}
         run: |
           $ErrorActionPreference = "Stop"
           $ssh = Join-Path $env:RUNNER_TEMP "playwork-source-ssh"
           New-Item -ItemType Directory -Force -Path $ssh | Out-Null
           $key = Join-Path $ssh "id_ed25519"
           $knownHosts = Join-Path $ssh "known_hosts"
-          Set-Content -Path $key -Value $env:PLAYWORK_SOURCE_DEPLOY_KEY -NoNewline
+          [System.IO.File]::WriteAllBytes($key, [Convert]::FromBase64String($env:PLAYWORK_SOURCE_DEPLOY_KEY_B64))
           $meta = Invoke-RestMethod -Uri "https://api.github.com/meta"
           $meta.ssh_keys | ForEach-Object { "github.com $_" } | Set-Content -Path $knownHosts
           $env:GIT_SSH_COMMAND = "ssh -i `"$key`" -o IdentitiesOnly=yes -o UserKnownHostsFile=`"$knownHosts`""
