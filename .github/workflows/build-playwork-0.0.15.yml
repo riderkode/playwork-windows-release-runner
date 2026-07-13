@@ -1,0 +1,103 @@
+name: build-playwork-windows-0.0.15
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-prove:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.15.0"
+
+      - name: Check out exact private source
+        env:
+          PLAYWORK_SOURCE_DEPLOY_KEY: ${{ secrets.PLAYWORK_SOURCE_DEPLOY_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ssh = Join-Path $env:RUNNER_TEMP "playwork-source-ssh"
+          New-Item -ItemType Directory -Force -Path $ssh | Out-Null
+          $key = Join-Path $ssh "id_ed25519"
+          $knownHosts = Join-Path $ssh "known_hosts"
+          Set-Content -Path $key -Value $env:PLAYWORK_SOURCE_DEPLOY_KEY -NoNewline
+          $meta = Invoke-RestMethod -Uri "https://api.github.com/meta"
+          $meta.ssh_keys | ForEach-Object { "github.com $_" } | Set-Content -Path $knownHosts
+          $env:GIT_SSH_COMMAND = "ssh -i `"$key`" -o IdentitiesOnly=yes -o UserKnownHostsFile=`"$knownHosts`""
+          git clone --filter=blob:none git@github.com:riderkode/playwork-main.git source
+          git -C source checkout --detach 88f55d1e227f72b83773c8c4e807808e7c51c6b6
+          $actual = git -C source rev-parse HEAD
+          if ($actual -ne "88f55d1e227f72b83773c8c4e807808e7c51c6b6") { throw "Wrong source SHA: $actual" }
+
+      - name: Install workspace dependencies
+        working-directory: source/runtime/playwork
+        run: npm ci --ignore-scripts
+
+      - name: Build exact standalone package
+        working-directory: source/runtime/playwork
+        run: npm run build:package -- --platform windows-x64 --app-attach never
+
+      - name: Run functional smoke
+        working-directory: source/runtime/playwork
+        run: |
+          node scripts/proof/runtime-functional-smoke.mjs --artifact-dir packages/computer-agent/binaries/windows-x64 --platform windows-x64 | Tee-Object runtime-functional-smoke-windows-x64.json
+          if ($LASTEXITCODE -ne 0) { throw "Functional smoke failed: $LASTEXITCODE" }
+
+      - name: Install release zipper
+        run: choco install zip -y --no-progress
+
+      - name: Package shared release channel
+        working-directory: source/runtime/playwork
+        run: npm run package:windows-release -- --base-url https://playwork.sh/download/latest --app-attach never
+
+      - name: Install packaged release into a fresh directory
+        working-directory: source/runtime/playwork
+        run: |
+          $ErrorActionPreference = "Stop"
+          $release = (Resolve-Path "packages/computer-agent/binaries/windows-x64-release").Path
+          $install = Join-Path $env:RUNNER_TEMP "playwork-public-install-shape"
+          $server = Start-Process python -ArgumentList @("-m", "http.server", "8765", "--bind", "127.0.0.1", "--directory", $release) -PassThru -WindowStyle Hidden
+          try {
+            Start-Sleep -Seconds 2
+            $env:PLAYWORK_WINDOWS_X64_ZIP_URL = "http://127.0.0.1:8765/playwork-windows-x64.zip"
+            $env:PLAYWORK_PORTABLE_GIT_URL = "http://127.0.0.1:8765/PortableGit-2.54.0-64-bit.7z.exe"
+            $env:PLAYWORK_INSTALL_DIR = $install
+            $env:PLAYWORK_ADD_TO_PATH = "0"
+            & (Join-Path $release "install.ps1")
+            if ($LASTEXITCODE -ne 0) { throw "Installer failed: $LASTEXITCODE" }
+          } finally {
+            Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
+          }
+          $version = & (Join-Path $install "playwork.cmd") --version
+          if ($LASTEXITCODE -ne 0 -or $version.Trim() -ne "0.0.15") { throw "Version proof failed: $version" }
+          $help = (& (Join-Path $install "playwork.cmd") --help) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw "Help proof failed: $LASTEXITCODE" }
+          if ($help -notmatch "playwork auth login" -or $help -notmatch "/export \[path\]") { throw "Customer help contract missing" }
+          if ($help -match "/share|/login|--provider|--api-key|codex|openai|hosted|runtime profile") { throw "Customer help exposes forbidden implementation language" }
+          $report = Get-Content (Join-Path $install "BINARY-STAGING-REPORT.json") -Raw | ConvertFrom-Json
+          if ($report.profile -ne "customer-playwork-account" -or $report.runtimeProfile -ne "playwork-hosted" -or $report.appAttach -ne "never") { throw "Installed profile contract failed" }
+          "version=$version profile=$($report.profile) runtimeProfile=$($report.runtimeProfile) appAttach=$($report.appAttach)" | Set-Content windows-fresh-install-proof.txt
+
+      - name: Capture provenance and hashes
+        working-directory: source/runtime/playwork
+        run: |
+          "88f55d1e227f72b83773c8c4e807808e7c51c6b6" | Set-Content packages/computer-agent/binaries/windows-x64-release/SOURCE-COMMIT.txt
+          Get-Content packages/computer-agent/binaries/windows-x64/BINARY-STAGING-REPORT.json
+          Get-Content packages/computer-agent/binaries/windows-x64-release/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: playwork-windows-x64-0.0.15-88f55d1e
+          path: |
+            source/runtime/playwork/packages/computer-agent/binaries/windows-x64-release
+            source/runtime/playwork/runtime-functional-smoke-windows-x64.json
+            source/runtime/playwork/windows-fresh-install-proof.txt
+          if-no-files-found: error
+          retention-days: 1
