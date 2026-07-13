@@ -83,14 +83,14 @@ jobs:
           globalThis.fetch = deny;
           '@ | Set-Content -Path $deny -Encoding utf8NoBOM
           function Invoke-Proof([string]$label, [bool]$denyNetwork) {
-            $home = Join-Path $root $label
-            New-Item -ItemType Directory -Force -Path $home | Out-Null
-            $env:HOME = $home
-            $env:USERPROFILE = $home
-            $env:APPDATA = Join-Path $home "AppData/Roaming"
-            $env:LOCALAPPDATA = Join-Path $home "AppData/Local"
+            $isolatedRoot = Join-Path $root $label
+            New-Item -ItemType Directory -Force -Path $isolatedRoot | Out-Null
+            $env:HOME = $isolatedRoot
+            $env:USERPROFILE = $isolatedRoot
+            $env:APPDATA = Join-Path $isolatedRoot "AppData/Roaming"
+            $env:LOCALAPPDATA = Join-Path $isolatedRoot "AppData/Local"
             $env:PLAYWORK_PRODUCT_PROOF = "hosted-headless"
-            $env:PLAYWORK_COMPUTER_AGENT_DIR = Join-Path $home "agent"
+            $env:PLAYWORK_COMPUTER_AGENT_DIR = Join-Path $isolatedRoot "agent"
             $env:PLAYWORK_OFFLINE = "1"
             $env:PLAYWORK_SKIP_VERSION_CHECK = "1"
             if ($denyNetwork) { $env:NODE_OPTIONS = "--require=$deny" } else { Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue }
