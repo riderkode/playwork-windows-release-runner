@@ -42,7 +42,7 @@ jobs:
 
       - name: Build exact standalone package
         working-directory: source/runtime/playwork
-        run: npm run build:package -- --platform windows-x64 --app-attach never
+        run: npm run build:package -- --platform windows-x64 --app-attach auto
 
       - name: Run functional smoke
         working-directory: source/runtime/playwork
@@ -55,7 +55,7 @@ jobs:
 
       - name: Package shared release channel
         working-directory: source/runtime/playwork
-        run: npm run package:windows-release -- --base-url https://playwork.sh/download/latest --app-attach never
+        run: npm run package:windows-release -- --base-url https://playwork.sh/download/latest --app-attach auto
 
       - name: Install packaged release into a fresh directory
         working-directory: source/runtime/playwork
@@ -82,7 +82,7 @@ jobs:
           if ($help -notmatch "playwork auth login" -or $help -notmatch "/export \[path\]") { throw "Customer help contract missing" }
           if ($help -match "/share|/login|--provider|--api-key|codex|openai|hosted|runtime profile") { throw "Customer help exposes forbidden implementation language" }
           $report = Get-Content (Join-Path $install "BINARY-STAGING-REPORT.json") -Raw | ConvertFrom-Json
-          if ($report.profile -ne "customer-playwork-account" -or $report.runtimeProfile -ne "playwork-hosted" -or $report.appAttach -ne "never") { throw "Installed profile contract failed" }
+          if ($report.profile -ne "customer-playwork-account" -or $report.runtimeProfile -ne "playwork-hosted" -or $report.appAttach -ne "auto") { throw "Installed profile contract failed" }
           "version=$version profile=$($report.profile) runtimeProfile=$($report.runtimeProfile) appAttach=$($report.appAttach)" | Set-Content windows-fresh-install-proof.txt
 
       - name: Capture provenance and hashes
